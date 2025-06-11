@@ -2594,8 +2594,8 @@ void ImDrawList::AddShadowConvexPoly(const ImVec2* points, int points_count, ImU
 
     const ImVec4 uvs = _Data->ShadowRectUvs[9];
 
-    int tex_width = _Data->Font->ContainerAtlas->TexWidth;
-    int tex_height = _Data->Font->ContainerAtlas->TexHeight;
+    int tex_width = _Data->Font->ContainerAtlas->TexData->Width;
+    int tex_height = _Data->Font->ContainerAtlas->TexData->Height;
     float inv_tex_width = 1.0f / (float)tex_width;
     float inv_tex_height = 1.0f / (float)tex_height;
 
@@ -4936,8 +4936,8 @@ static void ImFontAtlasBuildRegisterShadowCustomRects(ImFontAtlas* atlas)
     // The actual size we want to reserve, including padding
     const ImFontAtlasShadowTexConfig* shadow_cfg = &atlas->ShadowTexConfig;
     const unsigned int effective_size = shadow_cfg->CalcRectTexSize() + shadow_cfg->GetRectTexPadding();
-    atlas->ShadowRectIds[0] = atlas->AddCustomRectRegular(effective_size, effective_size);
-    atlas->ShadowRectIds[1] = atlas->AddCustomRectRegular(shadow_cfg->CalcConvexTexWidth() + shadow_cfg->GetConvexTexPadding(), shadow_cfg->CalcConvexTexHeight() + shadow_cfg->GetConvexTexPadding());
+    atlas->ShadowRectIds[0] = atlas->AddCustomRect(effective_size, effective_size);
+    atlas->ShadowRectIds[1] = atlas->AddCustomRect(shadow_cfg->CalcConvexTexWidth() + shadow_cfg->GetConvexTexPadding(), shadow_cfg->CalcConvexTexHeight() + shadow_cfg->GetConvexTexPadding());
 }
 
 // Calculates the signed distance from sample_pos to the nearest point on the rectangle defined by rect_min->rect_max
@@ -4999,8 +4999,8 @@ static void GaussianBlur(float* data, int size)
 // Generate the actual pixel data for rounded corners in the atlas
 static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 {
-    IM_ASSERT(atlas->TexPixelsAlpha8 != NULL || atlas->TexPixelsRGBA32 != NULL);
-    IM_ASSERT(atlas->ShadowRectIds[0] >= 0 && atlas->ShadowRectIds[1] >= 0);
+    IM_ASSERT(atlas->TexData && atlas->TexData->Pixels != NULL);
+    IM_ASSERT(atlas->ShadowRectIds[0] != ImFontAtlasRectId_Invalid && atlas->ShadowRectIds[1] != ImFontAtlasRectId_Invalid);
 
     // Because of the blur, we have to generate the full 3x3 texture here, and then we chop that down to just the 2x2 section we need later.
     // 'size' correspond to the our 3x3 size, whereas 'shadow_tex_size' correspond to our 2x2 version where duplicate mirrored corners are not stored.
@@ -5017,12 +5017,15 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
         const ImVec2 shadow_rect_max((float)(corner_size + edge_size), (float)(corner_size + edge_size));
 
         // Remove the padding we added
-        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[0]];
+        ImFontAtlasRect r;
+        if (!atlas->GetCustomRect(atlas->ShadowRectIds[0], &r))
+            IM_ASSERT(0);
+
         const int padding = shadow_cfg->GetRectTexPadding();
-        r.X += (unsigned short)padding;
-        r.Y += (unsigned short)padding;
-        r.Width -= (unsigned short)padding * 2;
-        r.Height -= (unsigned short)padding * 2;
+        r.x += (unsigned short)padding;
+        r.y += (unsigned short)padding;
+        r.w -= (unsigned short)padding * 2;
+        r.h -= (unsigned short)padding * 2;
 
         // Generate distance field
         // We draw the actual texture content by evaluating the distance field for the inner rectangle
@@ -5041,18 +5044,30 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
             GaussianBlur(tex_data, size);
 
         // Copy to texture, truncating to the actual required texture size (the bottom/right of the source data is chopped off, as we don't need it - see below). The truncated size is essentially the top 2x2 of our data, plus a little bit of padding for sampling.
-        const int tex_w = atlas->TexWidth;
+        ImTextureData* tex = atlas->TexData;
         const int shadow_tex_size = shadow_cfg->CalcRectTexSize();
         for (int y = 0; y < shadow_tex_size; y++)
             for (int x = 0; x < shadow_tex_size; x++)
             {
-                const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
                 const float alpha_f = tex_data[x + (y * size)];
                 const unsigned char alpha_8 = (unsigned char)(0xFF * alpha_f);
-                if (atlas->TexPixelsAlpha8)
-                    atlas->TexPixelsAlpha8[offset] = alpha_8;
-                else
-                    atlas->TexPixelsRGBA32[offset] = IM_COL32(255, 255, 255, alpha_8);
+
+                // FIXME-SHADOWS: May be optimized.
+                switch (atlas->TexData->Format)
+                {
+                case ImTextureFormat_Alpha8:
+                {
+                    ImU8* out_p = (ImU8*)(void*)tex->GetPixelsAt(r.x + x, r.y + y);
+                    *out_p = alpha_8;
+                    break;
+                }
+                case ImTextureFormat_RGBA32:
+                {
+                    ImU32* out_p = (ImU32*)(void*)tex->GetPixelsAt(r.x + x, r.y + y);
+                    *out_p = IM_COL32(255, 255, 255, alpha_8);;
+                    break;
+                }
+                }
             }
 
         // Generate UVs for each of the nine sections, which are arranged in a 3x3 grid starting from 0 in the top-left and going across then down
@@ -5062,23 +5077,24 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
             bool flip_h = false; // Do we need to flip the UVs horizontally?
             bool flip_v = false; // Do we need to flip the UVs vertically?
 
-            ImFontAtlasCustomRect sub_rect = r;
+            ImFontAtlasRect sub_rect = r;
             switch (i % 3)
             {
-            case 0: sub_rect.Width = (unsigned short)corner_size; break;
-            case 1: sub_rect.X    += (unsigned short)corner_size; sub_rect.Width = (unsigned short)edge_size; break;
-            case 2: sub_rect.Width = (unsigned short)corner_size; flip_h = true; break;
+            case 0: sub_rect.w = (unsigned short)corner_size; break;
+            case 1: sub_rect.x += (unsigned short)corner_size; sub_rect.w = (unsigned short)edge_size; break;
+            case 2: sub_rect.w = (unsigned short)corner_size; flip_h = true; break;
             }
 
             switch (i / 3)
             {
-            case 0: sub_rect.Height = (unsigned short)corner_size; break;
-            case 1: sub_rect.Y     += (unsigned short)corner_size; sub_rect.Height = (unsigned short)edge_size; break;
-            case 2: sub_rect.Height = (unsigned short)corner_size; flip_v = true; break;
+            case 0: sub_rect.h = (unsigned short)corner_size; break;
+            case 1: sub_rect.y += (unsigned short)corner_size; sub_rect.h = (unsigned short)edge_size; break;
+            case 2: sub_rect.h = (unsigned short)corner_size; flip_v = true; break;
             }
 
-            ImVec2 uv0, uv1;
-            atlas->CalcCustomRectUV(&sub_rect, &uv0, &uv1);
+            // FIXME-SHADOWS: caching UV !!
+            ImVec2 uv0 = ImVec2((float)(sub_rect.x), (float)(sub_rect.y)) * atlas->TexUvScale;
+            ImVec2 uv1 = ImVec2((float)(sub_rect.x + sub_rect.w), (float)(sub_rect.y + sub_rect.h)) * atlas->TexUvScale;
             atlas->ShadowRectUvs[i] = ImVec4(flip_h ? uv1.x : uv0.x, flip_v ? uv1.y : uv0.y, flip_h ? uv0.x : uv1.x, flip_v ? uv0.y : uv1.y);
         }
     }
@@ -5090,7 +5106,9 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 
         // Generate distance field
         // We draw the actual texture content by evaluating the distance field for the distance from a center point
-        ImFontAtlasCustomRect r = atlas->CustomRects[atlas->ShadowRectIds[1]];
+        ImFontAtlasRect r;
+        if (!atlas->GetCustomRect(atlas->ShadowRectIds[1], &r))
+            IM_ASSERT(0);
         ImVec2 center_point(size * 0.5f, size * 0.5f);
         float* tex_data = (float*)alloca(size * size * sizeof(float));
         for (int y = 0; y < size; y++)
@@ -5114,7 +5132,7 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
 
         const int tex_width = shadow_cfg->CalcConvexTexWidth();
         const int tex_height = shadow_cfg->CalcConvexTexHeight();
-        const int tex_w = atlas->TexWidth;
+        ImTextureData* tex = atlas->TexData;
         for (int y = 0; y < tex_height; y++)
             for (int x = 0; x < tex_width; x++)
             {
@@ -5122,22 +5140,35 @@ static void ImFontAtlasBuildRenderShadowTexData(ImFontAtlas* atlas)
                 const int src_y = ImClamp(y - src_y_offset, 0, size - 1);
                 const float alpha_f = tex_data[src_x + (src_y * size)];
                 const unsigned char alpha_8 = (unsigned char)(0xFF * alpha_f);
-                const unsigned int offset = (int)(r.X + x) + (int)(r.Y + y) * tex_w;
-                if (atlas->TexPixelsAlpha8)
-                    atlas->TexPixelsAlpha8[offset] = alpha_8;
-                else
-                    atlas->TexPixelsRGBA32[offset] = IM_COL32(255, 255, 255, alpha_8);
+
+                // FIXME-SHADOWS: May be optimized.
+                switch (atlas->TexData->Format)
+                {
+                case ImTextureFormat_Alpha8:
+                {
+                    ImU8* out_p = (ImU8*)(void*)tex->GetPixelsAt(r.x + x, r.y + y);
+                    *out_p = alpha_8;
+                    break;
+                }
+                case ImTextureFormat_RGBA32:
+                {
+                    ImU32* out_p = (ImU32*)(void*)tex->GetPixelsAt(r.x + x, r.y + y);
+                    *out_p = IM_COL32(255, 255, 255, alpha_8);;
+                    break;
+                }
+                }
             }
 
         // Remove the padding we added
-        r.X += (unsigned short)padding;
-        r.Y += (unsigned short)padding;
-        r.Width = (unsigned short)(tex_width - (padding * 2));
-        r.Height = (unsigned short)(tex_height - (padding * 2));
+        r.x += (unsigned short)padding;
+        r.y += (unsigned short)padding;
+        r.w = (unsigned short)(tex_width - (padding * 2));
+        r.h = (unsigned short)(tex_height - (padding * 2));
 
         // Generate UVs
-        ImVec2 uv0, uv1;
-        atlas->CalcCustomRectUV(&r, &uv0, &uv1);
+        // FIXME-SHADOWS: caching UV !!
+        ImVec2 uv0 = ImVec2((float)(r.x), (float)(r.y)) * atlas->TexUvScale;
+        ImVec2 uv1 = ImVec2((float)(r.x + r.w), (float)(r.y + r.h)) * atlas->TexUvScale;
         atlas->ShadowRectUvs[9] = ImVec4(uv0.x, uv0.y, uv1.x, uv1.y);
     }
 }
@@ -5176,8 +5207,8 @@ void ImFontAtlasBuildInit(ImFontAtlas* atlas)
     // Add required texture data
     ImFontAtlasBuildUpdateLinesTexData(atlas);
     ImFontAtlasBuildUpdateBasicTexData(atlas);
-    ImFontAtlasBuildRegisterShadowCustomRects(atlas); // FIXME-SHADOWS
-    ImFontAtlasBuildRenderShadowTexData(atlas); // FIXME-SHADOWS
+    ImFontAtlasBuildRegisterShadowCustomRects(atlas); // FIXME-SHADOWS: Both may be merged now.
+    ImFontAtlasBuildRenderShadowTexData(atlas); // FIXME-SHADOWS: Both may be merged now.
 
     // Register fonts
     ImFontAtlasBuildUpdatePointers(atlas);

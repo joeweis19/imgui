@@ -3763,7 +3763,7 @@ struct ImFontAtlas
     ImGuiContext*               OwnerContext;       // Context which own the atlas will be in charge of updating and destroying it.
 
     // [Internal] Shadow data
-    int                         ShadowRectIds[2];   // IDs of rect for shadow textures
+    ImFontAtlasRectId           ShadowRectIds[2];   // IDs of rect for shadow textures
     ImVec4                      ShadowRectUvs[10];  // UV coordinates for shadow textures, 9 for the rectangle shadows and the final entry for the convex shape shadows
     ImFontAtlasShadowTexConfig  ShadowTexConfig;    // Shadow texture baking config
 
