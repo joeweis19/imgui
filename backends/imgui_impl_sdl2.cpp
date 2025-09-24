@@ -912,74 +912,66 @@ void ImGui_ImplSDL2_NewFrame()
 #include <QuartzCore/CAMetalLayer.h>
 #endif
 
-WGPUSurface ImGui_ImplSDL2_CreateWGPUSurface_Helper(WGPUInstance instance, SDL_Window* window)
+WGPUSurface ImGui_ImplSDL2_CreateWGPUSurface(WGPUInstance instance, SDL_Window* window)
 {
     WGPUSurfaceDescriptor surfaceDescriptor = {};
-    WGPUChainedStruct     chainedStruct     = {};
+    WGPUChainedStruct chainedStruct = {};
+    WGPUSurface surface = {};
+
     SDL_SysWMinfo sysWMInfo;
     SDL_VERSION(&sysWMInfo.version);
     SDL_GetWindowWMInfo(window, &sysWMInfo);
 
-    WGPUSurface surface = {};
-
 #if defined(SDL_VIDEO_DRIVER_WAYLAND) || defined(SDL_VIDEO_DRIVER_X11)
-    const char *vidDrv = SDL_GetHint(SDL_HINT_VIDEODRIVER);
-    if(!vidDrv) return NULL;
+    const char* video_driver = SDL_GetHint(SDL_HINT_VIDEODRIVER);
+    if (!video_driver)
+        return nullptr;
 
-    if(tolower(vidDrv[0])=='w' && tolower(vidDrv[1])=='a' && tolower(vidDrv[2])=='y' &&
-       tolower(vidDrv[3])=='l' && tolower(vidDrv[4])=='a' && tolower(vidDrv[5])=='n' && tolower(vidDrv[6])=='d') { // wayland
-
+    if (strncmp(video_driver, "wayland", 7) == 0)
+    {
         chainedStruct.sType = WGPUSType_SurfaceSourceWaylandSurface;
-
         WGPUSurfaceSourceWaylandSurface surfaceWayland = {};
-        surfaceWayland.chain   = chainedStruct;
+        surfaceWayland.chain = chainedStruct;
         surfaceWayland.display = sysWMInfo.info.wl.display;
         surfaceWayland.surface = sysWMInfo.info.wl.surface;
-
         surfaceDescriptor.nextInChain = &surfaceWayland.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
-
-    } else {    // x11
+    }
+    else
+    {
         chainedStruct.sType = WGPUSType_SurfaceSourceXlibWindow;
-
         WGPUSurfaceSourceXlibWindow surfaceXlib = {};
-        surfaceXlib.chain   = chainedStruct;
+        surfaceXlib.chain = chainedStruct;
         surfaceXlib.display = sysWMInfo.info.x11.display;
-        surfaceXlib.window  = sysWMInfo.info.x11.window;
-
+        surfaceXlib.window = sysWMInfo.info.x11.window;
         surfaceDescriptor.nextInChain = &surfaceXlib.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
 #elif defined(SDL_VIDEO_DRIVER_WINDOWS)
     {
         chainedStruct.sType = WGPUSType_SurfaceSourceWindowsHWND;
-
         WGPUSurfaceSourceWindowsHWND surfaceHWND = {};
-        surfaceHWND.chain     = chainedStruct;
+        surfaceHWND.chain = chainedStruct;
         surfaceHWND.hinstance = sysWMInfo.info.win.hinstance;
-        surfaceHWND.hwnd      = sysWMInfo.info.win.window;
-
+        surfaceHWND.hwnd = sysWMInfo.info.win.window;
         surfaceDescriptor.nextInChain = &surfaceHWND.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
 #elif defined(SDL_VIDEO_DRIVER_COCOA)
     {
         id metal_layer = [CAMetalLayer layer];
-        NSWindow *ns_window = sysWMInfo.info.cocoa.window;
+        NSWindow* ns_window = sysWMInfo.info.cocoa.window;
         [ns_window.contentView setWantsLayer:YES];
         [ns_window.contentView setLayer:metal_layer];
-
         chainedStruct.sType = WGPUSType_SurfaceSourceMetalLayer;
-
         WGPUSurfaceSourceMetalLayer surfaceMetal = {};
         surfaceMetal.chain = chainedStruct;
         surfaceMetal.layer = metal_layer;
-
         surfaceDescriptor.nextInChain = &surfaceMetal.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
 #else
-    #error "Unsupported SDL2/WebGPU Backend"
+    #error "Unsupported SDL2+WebGPU Backend"
 #endif
     return surface;
 }

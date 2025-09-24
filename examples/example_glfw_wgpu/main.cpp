@@ -1,4 +1,4 @@
-// Dear ImGui: standalone example application for using GLFW + WebGPU
+// Dear ImGui: standalone example application for GLFW + WebGPU
 // - Emscripten is supported for publishing on web. See https://emscripten.org.
 // - Dawn is used as a WebGPU implementation on desktop.
 
@@ -13,24 +13,25 @@
 #include "imgui_impl_wgpu.h"
 #include <stdio.h>
 #include <stdlib.h>
-
 #include <GLFW/glfw3.h>
+
+// This example can also compile and run with Emscripten! See 'Makefile.emscripten' for details.
 #ifdef __EMSCRIPTEN__
-    #include <emscripten.h>
-    #include <emscripten/html5.h>
-    #if defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
-        #include <emscripten/html5_webgpu.h>
-    #endif
-    #include <webgpu/webgpu.h>
-    #include <webgpu/webgpu_cpp.h>
-    #include "../libs/emscripten/emscripten_mainloop_stub.h"
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#if defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
+#include <emscripten/html5_webgpu.h>
+#endif
+#include <webgpu/webgpu.h>
+#include <webgpu/webgpu_cpp.h>
+#include "../libs/emscripten/emscripten_mainloop_stub.h"
 #else
-    #if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
-        #include <webgpu/webgpu_glfw.h>
-    #endif
+#if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
+#include <webgpu/webgpu_glfw.h>
+#endif
 #endif
 
-// Global WebGPU required states
+// Data
 static WGPUInstance             wgpu_instance = nullptr;
 static WGPUDevice               wgpu_device   = nullptr;
 static WGPUSurface              wgpu_surface  = nullptr;
@@ -51,15 +52,14 @@ static void ResizeSurface(int width, int height)
 {
     wgpu_surface_configuration.width  = wgpu_surface_width  = width;
     wgpu_surface_configuration.height = wgpu_surface_height = height;
-
     wgpuSurfaceConfigure(wgpu_surface, &wgpu_surface_configuration);
 }
 
-static void ReleaseTextureAndConfigureSurface(WGPUTexture &texture, int fb_width, int fb_height)
+static void ReleaseTextureAndConfigureSurface(WGPUTexture& texture, int fb_width, int fb_height)
 {
     if (texture)
         wgpuTextureRelease(texture);
-    if ( fb_width > 0 && fb_height > 0 )
+    if (fb_width > 0 && fb_height > 0)
         ResizeSurface(fb_width, fb_height);
 }
 
@@ -68,21 +68,26 @@ int main(int, char**)
 {
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
-        return EXIT_FAILURE;
+        return 1;
 
     // Make sure GLFW does not initialize any graphics context.
     // This needs to be done explicitly later.
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+    // Create window
+    float main_scale = ImGui_ImplGlfw_GetContentScaleForMonitor(glfwGetPrimaryMonitor()); // Valid on GLFW 3.3+ only // FIXME-WGPU: Verify
+    wgpu_surface_width *= main_scale;
+    wgpu_surface_height *= main_scale;
     GLFWwindow* window = glfwCreateWindow(wgpu_surface_width, wgpu_surface_height, "Dear ImGui GLFW+WebGPU example", nullptr, nullptr);
     if (window == nullptr)
-        return EXIT_FAILURE;
+        return 1;
 
     // Initialize the WebGPU environment
     if (!InitWGPU(window))
     {
         glfwDestroyWindow(window);
         glfwTerminate();
-        return EXIT_FAILURE;
+        return 1;
     }
 
     glfwShowWindow(window);
@@ -97,6 +102,11 @@ int main(int, char**)
     // Setup Dear ImGui style
     ImGui::StyleColorsDark();
     //ImGui::StyleColorsLight();
+
+    // Setup scaling
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+    style.FontScaleDpi = main_scale;        // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
 
     // Setup Platform/Renderer backends
     ImGui_ImplGlfw_InitForOther(window, true);
@@ -114,19 +124,18 @@ int main(int, char**)
     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
     // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
     // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
     // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
     // - Read 'docs/FONTS.md' for more instructions and details. If you like the default font but want it to scale better, consider using the 'ProggyVector' from the same author!
     // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    // - Emscripten allows preloading a file or folder to be accessible at runtime. See Makefile for details.
+    // - Our Emscripten build process allows embedding fonts to be accessible at runtime from the "fonts/" folder. See Makefile.emscripten for details.
+    //style.FontSizeBase = 20.0f;
     //io.Fonts->AddFontDefault();
 #ifndef IMGUI_DISABLE_FILE_FUNCTIONS
-    //io.Fonts->AddFontFromFileTTF("fonts/segoeui.ttf", 18.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/DroidSans.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/Cousine-Regular.ttf", 15.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/ProggyTiny.ttf", 10.0f);
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+    //io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
+    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
     //IM_ASSERT(font != nullptr);
 #endif
 
@@ -162,7 +171,7 @@ int main(int, char**)
         glfwGetFramebufferSize((GLFWwindow*)window, &width, &height);
         if (width != wgpu_surface_width || height != wgpu_surface_height)
         {
-            ImGui_ImplWGPU_InvalidateDeviceObjects();
+            ImGui_ImplWGPU_InvalidateDeviceObjects(); // FIXME-WGPU: Why doing this? this will recreate all font textures etc.
             ResizeSurface(width, height);
             ImGui_ImplWGPU_CreateDeviceObjects();
         }
@@ -170,8 +179,9 @@ int main(int, char**)
         WGPUSurfaceTexture surfaceTexture;
         wgpuSurfaceGetCurrentTexture(wgpu_surface, &surfaceTexture);
 
-        // Check SurfaceTexture status, if NOT optimal status we try to re-configure Surface
-        if (!ImGui_ImplWGPU_CheckSurfaceTextureOptimalStatus_Helper(surfaceTexture.status)) {
+        // Check if surface texture is not optimal and try to re-configure Surface
+        if (!ImGui_ImplWGPU_CheckSurfaceTextureOptimalStatus_Helper(surfaceTexture.status))
+        {
             ReleaseTextureAndConfigureSurface(surfaceTexture.texture, width, height);
             continue;
         }
@@ -284,17 +294,17 @@ int main(int, char**)
     glfwDestroyWindow(window);
     glfwTerminate();
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 
-
 #if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
-static WGPUAdapter GetAdapter(wgpu::Instance &instance)
+static WGPUAdapter GetAdapter(wgpu::Instance& instance)
 {
     wgpu::Adapter acquiredAdapter;
     wgpu::RequestAdapterOptions adapterOptions;
 
-    auto onRequestAdapter = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
+    auto onRequestAdapter = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message)
+    {
         if (status != wgpu::RequestAdapterStatus::Success)
         {
             printf("Failed to get an adapter: %s\n", message.data);
@@ -306,7 +316,7 @@ static WGPUAdapter GetAdapter(wgpu::Instance &instance)
     // Synchronously (wait until) acquire Adapter
     wgpu::Future  waitAdapterFunc { instance.RequestAdapter(&adapterOptions, wgpu::CallbackMode::WaitAnyOnly, onRequestAdapter) };
     wgpu::WaitStatus waitStatusAdapter = instance.WaitAny(waitAdapterFunc, UINT64_MAX);
-    assert(acquiredAdapter != nullptr && waitStatusAdapter == wgpu::WaitStatus::Success && "Error on Adapter request");
+    IM_ASSERT(acquiredAdapter != nullptr && waitStatusAdapter == wgpu::WaitStatus::Success && "Error on Adapter request");
 #ifndef NDEBUG
     ImGui_ImplWGPU_PrintAdapterInfo_Helper(acquiredAdapter.Get());
 #endif
@@ -321,7 +331,8 @@ static WGPUDevice GetDevice(wgpu::Instance &instance, wgpu::Adapter &adapter)
     deviceDesc.SetUncapturedErrorCallback(ImGui_ImplWGPU_DAWN_ErrorCallback_Helper);
 
     wgpu::Device acquiredDevice;
-    auto onRequestDevice = [&](wgpu::RequestDeviceStatus status, wgpu::Device localDevice, wgpu::StringView message) {
+    auto onRequestDevice = [&](wgpu::RequestDeviceStatus status, wgpu::Device localDevice, wgpu::StringView message)
+    {
         if (status != wgpu::RequestDeviceStatus::Success)
         {
             printf("Failed to get an device: %s\n", message.data);
@@ -333,7 +344,7 @@ static WGPUDevice GetDevice(wgpu::Instance &instance, wgpu::Adapter &adapter)
     // Synchronously (wait until) get Device
     wgpu::Future waitDeviceFunc { adapter.RequestDevice(&deviceDesc, wgpu::CallbackMode::WaitAnyOnly, onRequestDevice) };
     wgpu::WaitStatus waitStatusDevice = instance.WaitAny(waitDeviceFunc, UINT64_MAX);
-    assert(acquiredDevice != nullptr && waitStatusDevice == wgpu::WaitStatus::Success && "Error on Device request");
+    IM_ASSERT(acquiredDevice != nullptr && waitStatusDevice == wgpu::WaitStatus::Success && "Error on Device request");
     return acquiredDevice.MoveToCHandle();
 }
 #elif defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
@@ -348,29 +359,33 @@ EM_ASYNC_JS( void, getAdapterAndDeviceViaJS, (),
     Module.preinitializedWebGPUDevice = device;
 } );
 #else // __EMSCRIPTEN__
-static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void *userdata1, void *userdata2)
+static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2)
 {
     if (status == WGPURequestAdapterStatus_Success)
     {
-        WGPUAdapter *extAdapter = (WGPUAdapter *) userdata1;
+        WGPUAdapter* extAdapter = (WGPUAdapter*)userdata1;
         *extAdapter = adapter;
     }
     else
+    {
         printf("Request_adapter status=%#.8x message=%.*s\n", status, (int) message.length, message.data);
+    }
 }
 
-static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void *userdata1, void *userdata2)
+static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2)
 {
     if (status == WGPURequestDeviceStatus_Success)
     {
-        WGPUDevice *extDevice = (WGPUDevice *) userdata1;
+        WGPUDevice* extDevice = (WGPUDevice*)userdata1;
         *extDevice = device;
     }
     else
+    {
         printf("Request_device status=%#.8x message=%.*s\n", status, (int) message.length, message.data);
+    }
 }
 
-static WGPUAdapter GetAdapter(WGPUInstance &instance)
+static WGPUAdapter GetAdapter(WGPUInstance& instance)
 {
     WGPURequestAdapterOptions adapterOptions = {};
 
@@ -380,8 +395,8 @@ static WGPUAdapter GetAdapter(WGPUInstance &instance)
     adapterCallbackInfo.userdata1 = &localAdapter;
 
     wgpuInstanceRequestAdapter(wgpu_instance, &adapterOptions, adapterCallbackInfo);
-    assert(localAdapter && "Error on Adapter request");
 
+    IM_ASSERT(localAdapter && "Error on Adapter request");
 #ifndef NDEBUG
     ImGui_ImplWGPU_PrintAdapterInfo_Helper(localAdapter);
 #endif
@@ -389,7 +404,7 @@ static WGPUAdapter GetAdapter(WGPUInstance &instance)
     return localAdapter;
 }
 
-static WGPUDevice GetDevice(WGPUAdapter &adapter)
+static WGPUDevice GetDevice(WGPUAdapter& adapter)
 {
     static WGPUDevice localDevice;
     WGPURequestDeviceCallbackInfo deviceCallbackInfo = {};
@@ -397,7 +412,7 @@ static WGPUDevice GetDevice(WGPUAdapter &adapter)
     deviceCallbackInfo.userdata1 = &localDevice;
 
     wgpuAdapterRequestDevice(adapter, NULL, deviceCallbackInfo);
-    assert(localDevice && "Error on Device request");
+    IM_ASSERT(localDevice && "Error on Device request");
 
     return localDevice;
 }
@@ -426,7 +441,7 @@ static bool InitWGPU(void* window)
     surfaceDesc.nextInChain = &canvasDesc;
     wgpu::Surface surface = instance.CreateSurface(&surfaceDesc);
 #else
-    wgpu::Surface surface = wgpu::glfw::CreateSurfaceForWindow(instance, (GLFWwindow *) window);
+    wgpu::Surface surface = wgpu::glfw::CreateSurfaceForWindow(instance, (GLFWwindow*)window);
 #endif
     if (!surface)
         return false;
@@ -448,7 +463,7 @@ static bool InitWGPU(void* window)
     getAdapterAndDeviceViaJS();
 
     wgpu_device   = emscripten_webgpu_get_device();
-    assert(wgpu_device != nullptr && "Error creating the Device");
+    IM_ASSERT(wgpu_device != nullptr && "Error creating the Device");
 
     WGPUSurfaceDescriptorFromCanvasHTMLSelector html_surface_desc = {};
     html_surface_desc.chain.sType = WGPUSType_SurfaceDescriptorFromCanvasHTMLSelector;
@@ -468,8 +483,7 @@ static bool InitWGPU(void* window)
     wgpu_device = GetDevice(adapter);
 
     // Create the surface.
-    wgpu_surface = ImGui_ImplGLFW_CreateWGPUSurface_Helper( wgpu_instance, (GLFWwindow*) window);
-
+    wgpu_surface = ImGui_ImplGLFW_CreateWGPUSurface(wgpu_instance, (GLFWwindow*)window);
     if (!wgpu_surface)
         return false;
 
@@ -489,7 +503,6 @@ static bool InitWGPU(void* window)
     wgpu_surface_configuration.format      = preferred_fmt;
 
     wgpuSurfaceConfigure(wgpu_surface, &wgpu_surface_configuration);
-
     wgpu_queue    = wgpuDeviceGetQueue(wgpu_device);
 
     return true;

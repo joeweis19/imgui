@@ -1,4 +1,4 @@
-// Dear ImGui: standalone example application for using GLFW + WebGPU
+// Dear ImGui: standalone example application for using SDL2 + WebGPU
 // - Emscripten is supported for publishing on web. See https://emscripten.org.
 // - Dawn is used as a WebGPU implementation on desktop.
 
@@ -8,40 +8,35 @@
 // - Documentation        https://dearimgui.com/docs (same as your local docs/ folder).
 // - Introduction, links and more at the top of imgui.cpp
 
-
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_wgpu.h"
 #include <stdio.h>
-
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#include <emscripten/html5.h>
-    #if defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
-        #include <emscripten/html5_webgpu.h>
-    #endif
-
-#include "../libs/emscripten/emscripten_mainloop_stub.h"
-#endif
-
 #include <SDL.h>
-#include <webgpu/webgpu.h>
-#if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
-    #include <webgpu/webgpu_cpp.h>
-#endif
 
 // This example can also compile and run with Emscripten! See 'Makefile.emscripten' for details.
 #ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#if defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
+#include <emscripten/html5_webgpu.h>
+#endif
+#include "../libs/emscripten/emscripten_mainloop_stub.h"
 #endif
 
-// Global WebGPU required states
+#include <webgpu/webgpu.h>
+#if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
+#include <webgpu/webgpu_cpp.h>
+#endif
+
+// Data
 WGPUInstance             wgpu_instance = nullptr;
 WGPUDevice               wgpu_device   = nullptr;
 WGPUSurface              wgpu_surface  = nullptr;
 WGPUQueue                wgpu_queue    = nullptr;
 WGPUSurfaceConfiguration wgpu_surface_configuration {};
 int                      wgpu_surface_width = 1280;
-int                      wgpu_surface_height = 720;
+int                      wgpu_surface_height = 800;
 
 // Forward declarations
 static bool InitWGPU(void* window);
@@ -50,33 +45,33 @@ static void ResizeSurface(int width, int height)
 {
     wgpu_surface_configuration.width  = wgpu_surface_width  = width;
     wgpu_surface_configuration.height = wgpu_surface_height = height;
-
-    wgpuSurfaceConfigure( wgpu_surface, (WGPUSurfaceConfiguration *) &wgpu_surface_configuration );
+    wgpuSurfaceConfigure(wgpu_surface, (WGPUSurfaceConfiguration*)&wgpu_surface_configuration);
 }
 
-static void ReleaseTextureAndConfigureSurface(WGPUTexture &texture, int fb_width, int fb_height)
+static void ReleaseTextureAndConfigureSurface(WGPUTexture& texture, int fb_width, int fb_height)
 {
     if (texture)
         wgpuTextureRelease(texture);
-    if ( fb_width > 0 && fb_height > 0 )
+    if (fb_width > 0 && fb_height > 0)
         ResizeSurface(fb_width, fb_height);
 }
 
 // Main code
 int main(int, char**)
 {
+    // Setup SDL
 
 #if defined(__linux__)
-    // it's necessary to specify "x11" or "wayland": default is "x11" it works also in wayland
+    // It's necessary to specify "x11" or "wayland": default is "x11" it works also in wayland
+    // Or comment the line and export SDL_VIDEODRIVER environment variable:
+    //   export SDL_VIDEODRIVER=wayland             // To set wayland session type
+    //   export SDL_VIDEODRIVER=$XDG_SESSION_TYPE   // To get current session type from WM: x11 | wayland
     SDL_SetHint(SDL_HINT_VIDEODRIVER, "x11");
-        // or comment the previous line and export SDL_VIDEODRIVER environment variable:
-        // export SDL_VIDEODRIVER=wayland             (to set wayland session type)
-        // export SDL_VIDEODRIVER=$XDG_SESSION_TYPE   (to get current session type from WM: x11 | wayland)
 #endif
 
-    // Init SDL
-    SDL_Init(SDL_INIT_VIDEO);
-    SDL_Window *window = SDL_CreateWindow("Dear ImGui SDL2+WebGPU example", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, wgpu_surface_width, wgpu_surface_height, SDL_WINDOW_RESIZABLE);
+    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER);
+    // Create window
+    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+WebGPU example", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, wgpu_surface_width, wgpu_surface_height, SDL_WINDOW_RESIZABLE);
 
     // Initialize WGPU
     InitWGPU(window);
@@ -92,9 +87,13 @@ int main(int, char**)
     ImGui::StyleColorsDark();
     //ImGui::StyleColorsLight();
 
+    // Setup scaling
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.ScaleAllSizes(main_scale);        // Bake a fixed style scale. (until we have a solution for dynamic style scaling, changing this requires resetting Style + calling this again)
+    style.FontScaleDpi = main_scale;        // Set initial font scale. (using io.ConfigDpiScaleFonts=true makes this unnecessary. We leave both here for documentation purpose)
+
     // Setup Platform/Renderer backends
     ImGui_ImplSDL2_InitForOther(window);
-
     ImGui_ImplWGPU_InitInfo init_info;
     init_info.Device = wgpu_device;
     init_info.NumFramesInFlight = 3;
@@ -106,19 +105,18 @@ int main(int, char**)
     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
     // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
     // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
     // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-    // - Read 'docs/FONTS.md' for more instructions and details.
+    // - Read 'docs/FONTS.md' for more instructions and details. If you like the default font but want it to scale better, consider using the 'ProggyVector' from the same author!
     // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    // - Emscripten allows preloading a file or folder to be accessible at runtime. See Makefile for details.
+    // - Our Emscripten build process allows embedding fonts to be accessible at runtime from the "fonts/" folder. See Makefile.emscripten for details.
+    //style.FontSizeBase = 20.0f;
     //io.Fonts->AddFontDefault();
 #ifndef IMGUI_DISABLE_FILE_FUNCTIONS
-    //io.Fonts->AddFontFromFileTTF("fonts/segoeui.ttf", 18.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/DroidSans.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/Roboto-Medium.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/Cousine-Regular.ttf", 15.0f);
-    //io.Fonts->AddFontFromFileTTF("fonts/ProggyTiny.ttf", 10.0f);
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("fonts/ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+    //io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf");
+    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf");
+    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf");
     //IM_ASSERT(font != nullptr);
 #endif
 
@@ -127,48 +125,48 @@ int main(int, char**)
     bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
-    SDL_Event event;
-    bool canCloseWindow = false;
     // Main loop
+    bool done = false;
 #ifdef __EMSCRIPTEN__
     // For an Emscripten build we are disabling file-system access, so let's not attempt to do a fopen() of the imgui.ini file.
     // You may manually call LoadIniSettingsFromMemory() to load settings from your own storage.
     io.IniFilename = nullptr;
     EMSCRIPTEN_MAINLOOP_BEGIN
 #else
-    while (!canCloseWindow) 
+    while (!done)
 #endif
     {
-        while (SDL_PollEvent(&event))
-        {
-            ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT ||
-               (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE &&
-                event.window.windowID == SDL_GetWindowID(window)))
-                    canCloseWindow = true;
-        }
         // Poll and handle events (inputs, window resize, etc.)
         // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
         // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application, or clear/overwrite your copy of the mouse data.
         // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application, or clear/overwrite your copy of the keyboard data.
         // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
+        SDL_Event event;
+        while (SDL_PollEvent(&event))
+        {
+            ImGui_ImplSDL2_ProcessEvent(&event);
+            if (event.type == SDL_QUIT)
+                done = true;
+            if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
+                done = true;
+        }
 
         // React to changes in screen size
         int width, height;
         SDL_GetWindowSize(window, &width, &height);
         if (width != wgpu_surface_width || height != wgpu_surface_height)
         {
-            ImGui_ImplWGPU_InvalidateDeviceObjects();
+            ImGui_ImplWGPU_InvalidateDeviceObjects(); // FIXME-WGPU: Why doing this? this will recreate all font textures etc.
             ResizeSurface(width, height);
             ImGui_ImplWGPU_CreateDeviceObjects();
-            //continue;
         }
 
         WGPUSurfaceTexture surfaceTexture;
         wgpuSurfaceGetCurrentTexture(wgpu_surface, &surfaceTexture);
 
-        // Check SurfaceTexture status, if NOT optimal status we try to re-configure Surface
-        if (!ImGui_ImplWGPU_CheckSurfaceTextureOptimalStatus_Helper(surfaceTexture.status)) {
+        // Check if surface texture is not optimal and try to re-configure Surface
+        if (!ImGui_ImplWGPU_CheckSurfaceTextureOptimalStatus_Helper(surfaceTexture.status))
+        {
             ReleaseTextureAndConfigureSurface(surfaceTexture.texture, width, height);
             continue;
         }
@@ -277,20 +275,20 @@ int main(int, char**)
     wgpuDeviceRelease(wgpu_device);
     wgpuInstanceRelease(wgpu_instance);
 
-    // Terminate SDL
     SDL_DestroyWindow(window);
     SDL_Quit();
 
-    return EXIT_SUCCESS;
+    return 0;
 }
 
 #if defined(IMGUI_IMPL_WEBGPU_BACKEND_DAWN)
-static WGPUAdapter GetAdapter(wgpu::Instance &instance)
+static WGPUAdapter GetAdapter(wgpu::Instance& instance)
 {
     wgpu::Adapter acquiredAdapter;
     wgpu::RequestAdapterOptions adapterOptions;
 
-    auto onRequestAdapter = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message) {
+    auto onRequestAdapter = [&](wgpu::RequestAdapterStatus status, wgpu::Adapter adapter, wgpu::StringView message)
+    {
         if (status != wgpu::RequestAdapterStatus::Success)
         {
             printf("Failed to get an adapter: %s\n", message.data);
@@ -302,7 +300,7 @@ static WGPUAdapter GetAdapter(wgpu::Instance &instance)
     // Synchronously (wait until) acquire Adapter
     wgpu::Future  waitAdapterFunc { instance.RequestAdapter(&adapterOptions, wgpu::CallbackMode::WaitAnyOnly, onRequestAdapter) };
     wgpu::WaitStatus waitStatusAdapter = instance.WaitAny(waitAdapterFunc, UINT64_MAX);
-    assert(acquiredAdapter != nullptr && waitStatusAdapter == wgpu::WaitStatus::Success && "Error on Adapter request");
+    IM_ASSERT(acquiredAdapter != nullptr && waitStatusAdapter == wgpu::WaitStatus::Success && "Error on Adapter request");
 #ifndef NDEBUG
     ImGui_ImplWGPU_PrintAdapterInfo_Helper(acquiredAdapter.Get());
 #endif
@@ -317,7 +315,8 @@ static WGPUDevice GetDevice(wgpu::Instance &instance, wgpu::Adapter &adapter)
     deviceDesc.SetUncapturedErrorCallback(ImGui_ImplWGPU_DAWN_ErrorCallback_Helper);
 
     wgpu::Device acquiredDevice;
-    auto onRequestDevice = [&](wgpu::RequestDeviceStatus status, wgpu::Device localDevice, wgpu::StringView message) {
+    auto onRequestDevice = [&](wgpu::RequestDeviceStatus status, wgpu::Device localDevice, wgpu::StringView message)
+    {
         if (status != wgpu::RequestDeviceStatus::Success)
         {
             printf("Failed to get an device: %s\n", message.data);
@@ -329,7 +328,7 @@ static WGPUDevice GetDevice(wgpu::Instance &instance, wgpu::Adapter &adapter)
     // Synchronously (wait until) get Device
     wgpu::Future waitDeviceFunc { adapter.RequestDevice(&deviceDesc, wgpu::CallbackMode::WaitAnyOnly, onRequestDevice) };
     wgpu::WaitStatus waitStatusDevice = instance.WaitAny(waitDeviceFunc, UINT64_MAX);
-    assert(acquiredDevice != nullptr && waitStatusDevice == wgpu::WaitStatus::Success && "Error on Device request");
+    IM_ASSERT(acquiredDevice != nullptr && waitStatusDevice == wgpu::WaitStatus::Success && "Error on Device request");
     return acquiredDevice.MoveToCHandle();
 }
 #elif defined(IMGUI_IMPL_WEBGPU_BACKEND_WGPU)
@@ -337,36 +336,40 @@ static WGPUDevice GetDevice(wgpu::Instance &instance, wgpu::Adapter &adapter)
 // Adapter and device initialization via JS
 EM_ASYNC_JS( void, getAdapterAndDeviceViaJS, (),
 {
-    if (!navigator.gpu) throw Error("WebGPU not supported.");
-
+    if (!navigator.gpu)
+        throw Error("WebGPU not supported.");
     const adapter = await navigator.gpu.requestAdapter();
     const device = await adapter.requestDevice();
     Module.preinitializedWebGPUDevice = device;
 } );
 #else // __EMSCRIPTEN__
-static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void *userdata1, void *userdata2)
+static void handle_request_adapter(WGPURequestAdapterStatus status, WGPUAdapter adapter, WGPUStringView message, void* userdata1, void* userdata2)
 {
     if (status == WGPURequestAdapterStatus_Success)
     {
-        WGPUAdapter *extAdapter = (WGPUAdapter *) userdata1;
+        WGPUAdapter* extAdapter = (WGPUAdapter*)userdata1;
         *extAdapter = adapter;
     }
     else
-        printf("Request_adapter status=%#.8x message=%.*s\n", status, (int) message.length, message.data);
+    {
+        printf("Request_adapter status=%#.8x message=%.*s\n", status, (int)message.length, message.data);
+    }
 }
 
-static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void *userdata1, void *userdata2)
+static void handle_request_device(WGPURequestDeviceStatus status, WGPUDevice device, WGPUStringView message, void* userdata1, void* userdata2)
 {
     if (status == WGPURequestDeviceStatus_Success)
     {
-        WGPUDevice *extDevice = (WGPUDevice *) userdata1;
+        WGPUDevice* extDevice = (WGPUDevice*)userdata1;
         *extDevice = device;
     }
     else
-        printf("Request_device status=%#.8x message=%.*s\n", status, (int) message.length, message.data);
+    {
+        printf("Request_device status=%#.8x message=%.*s\n", status, (int)message.length, message.data);
+    }
 }
 
-static WGPUAdapter GetAdapter(WGPUInstance &instance)
+static WGPUAdapter GetAdapter(WGPUInstance& instance)
 {
     WGPURequestAdapterOptions adapterOptions = {};
 
@@ -376,7 +379,7 @@ static WGPUAdapter GetAdapter(WGPUInstance &instance)
     adapterCallbackInfo.userdata1 = &localAdapter;
 
     wgpuInstanceRequestAdapter(wgpu_instance, &adapterOptions, adapterCallbackInfo);
-    assert(localAdapter && "Error on Adapter request");
+    IM_ASSERT(localAdapter && "Error on Adapter request");
 
 #ifndef NDEBUG
     ImGui_ImplWGPU_PrintAdapterInfo_Helper(localAdapter);
@@ -393,7 +396,7 @@ static WGPUDevice GetDevice(WGPUAdapter &adapter)
     deviceCallbackInfo.userdata1 = &localDevice;
 
     wgpuAdapterRequestDevice(adapter, NULL, deviceCallbackInfo);
-    assert(localDevice && "Error on Device request");
+    IM_ASSERT(localDevice && "Error on Device request");
 
     return localDevice;
 }
@@ -420,9 +423,9 @@ static bool InitWGPU(void* window)
 
     wgpu::SurfaceDescriptor surfaceDesc = {};
     surfaceDesc.nextInChain = &canvasDesc;
-    wgpu::Surface surface = instance.CreateSurface(&surfaceDesc) ;
+    wgpu::Surface surface = instance.CreateSurface(&surfaceDesc);
 #else
-    wgpu::Surface surface = ImGui_ImplSDL2_CreateWGPUSurface_Helper(instance.Get(), (SDL_Window *) window);
+    wgpu::Surface surface = ImGui_ImplSDL2_CreateWGPUSurface(instance.Get(), (SDL_Window*)window);
 #endif
     if (!surface)
         return false;
@@ -464,8 +467,7 @@ static bool InitWGPU(void* window)
     wgpu_device = GetDevice(adapter);
 
     // Create the surface.
-    wgpu_surface = ImGui_ImplSDL2_CreateWGPUSurface_Helper(wgpu_instance, (SDL_Window *) window);
-
+    wgpu_surface = ImGui_ImplSDL2_CreateWGPUSurface(wgpu_instance, (SDL_Window*)window);
     if (!wgpu_surface)
         return false;
 

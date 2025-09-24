@@ -854,51 +854,50 @@ void ImGui_ImplSDL3_NewFrame()
 #  include <windows.h>
 #endif
 
-WGPUSurface ImGui_ImplSDL3_CreateWGPUSurface_Helper(WGPUInstance instance, SDL_Window* window) {
+WGPUSurface ImGui_ImplSDL3_CreateWGPUSurface(WGPUInstance instance, SDL_Window* window)
+{
     SDL_PropertiesID propertiesID = SDL_GetWindowProperties(window);
     WGPUSurfaceDescriptor surfaceDescriptor = {};
-
     WGPUSurface surface = {};
 
 #if defined(SDL_PLATFORM_MACOS)
     {
         id metal_layer = NULL;
-        NSWindow *ns_window = (__bridge NSWindow *)SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
+        NSWindow* ns_window = (__bridge NSWindow*)SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_COCOA_WINDOW_POINTER, NULL);
         if (!ns_window) return NULL;
         [ns_window.contentView setWantsLayer : YES];
         metal_layer = [CAMetalLayer layer];
         [ns_window.contentView setLayer : metal_layer];
-
         WGPUSurfaceSourceMetalLayer surfaceMetal = {};
         surfaceMetal.chain.sType = WGPUSType_SurfaceSourceMetalLayer;
         surfaceMetal.layer = metal_layer;
-
         surfaceDescriptor.nextInChain = &surfaceMetal.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
 #elif defined(SDL_PLATFORM_LINUX)
-    if (!SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland")) {
-        void *w_display = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
-        void *w_surface = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
-        if (!w_display || !w_surface) return NULL;
-
+    if (!SDL_strcmp(SDL_GetCurrentVideoDriver(), "wayland"))
+    {
+        void* w_display = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_WAYLAND_DISPLAY_POINTER, NULL);
+        void* w_surface = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_WAYLAND_SURFACE_POINTER, NULL);
+        if (!w_display || !w_surface)
+            return NULL;
         WGPUSurfaceSourceWaylandSurface surfaceWayland = {};
         surfaceWayland.chain.sType = WGPUSType_SurfaceSourceWaylandSurface;
         surfaceWayland.display = w_display;
         surfaceWayland.surface = w_surface;
-
         surfaceDescriptor.nextInChain = &surfaceWayland.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
-    } else if (!SDL_strcmp(SDL_GetCurrentVideoDriver(), "x11")) {
-        void *x_display   = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
+    }
+    else if (!SDL_strcmp(SDL_GetCurrentVideoDriver(), "x11"))
+    {
+        void* x_display = SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_X11_DISPLAY_POINTER, NULL);
         uint64_t x_window = SDL_GetNumberProperty(propertiesID, SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
-        if (!x_display || !x_window) return NULL;
-
+        if (!x_display || !x_window)
+            return NULL;
         WGPUSurfaceSourceXlibWindow surfaceXlib = {};
         surfaceXlib.chain.sType = WGPUSType_SurfaceSourceXlibWindow;
         surfaceXlib.display = x_display;
-        surfaceXlib.window  = x_window;
-
+        surfaceXlib.window = x_window;
         surfaceDescriptor.nextInChain = &surfaceXlib.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
@@ -906,19 +905,18 @@ WGPUSurface ImGui_ImplSDL3_CreateWGPUSurface_Helper(WGPUInstance instance, SDL_W
 #elif defined(SDL_PLATFORM_WIN32)
     {
         HWND hwnd = (HWND)SDL_GetPointerProperty(propertiesID, SDL_PROP_WINDOW_WIN32_HWND_POINTER, NULL);
-        if (!hwnd) return NULL;
-        HINSTANCE hinstance = GetModuleHandle(NULL);
-
+        if (!hwnd)
+            return NULL;
+        HINSTANCE hinstance = ::GetModuleHandle(NULL);
         WGPUSurfaceSourceWindowsHWND surfaceHWND = {};
         surfaceHWND.chain.sType = WGPUSType_SurfaceSourceWindowsHWND;
         surfaceHWND.hinstance = hinstance;
         surfaceHWND.hwnd = hwnd;
-
         surfaceDescriptor.nextInChain = &surfaceHWND.chain;
         surface = wgpuInstanceCreateSurface(instance, &surfaceDescriptor);
     }
 #else
-    #error "Unsupported SDL3/WebGPU Backend"
+    #error "Unsupported SDL3+WebGPU Backend"
 #endif
     return surface;
 }
